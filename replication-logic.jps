@@ -1,0 +1,161 @@
+type: update                                                                                                                                                                                                                    
+version: 1.5                                                                                                                                                                                                                     
+id: gluster_cluster                                                                                                                                                                                                              
+baseUrl: https://raw.githubusercontent.com/SiryjVyiko/gluster_cluster/master                                                                                                                                                     
+description:                                                                                                                                                                                                                     
+  short: GlusterFS Cluster Replication Logic (Beta)                                                                                                                                                                                                                                 
+name: GlusterFS Cluster Replication Logic
+
+globals:
+  replicatedPath: ${settings.replicatedPath:/data}
+                                                                                                                                                                              
+onInstall:        
+  initiateGlusterFSCluster
+
+onAfterStart:
+  - cmd[storage]: mount -a; exportfs -ra;
+
+onAfterServiceScaleOut[storage]:                                                                                                                                                                                                 
+  - forEach(newnode:event.response.nodes):                                                                                                                                                                                       
+      - addBrickToVolume:                                                                                                                                                                                                          
+          address: ${@newnode.address}                                                                                                                                                                                             
+          id: ${@newnode.id}
+                                                                                                                                                                                                                                 
+onBeforeScaleIn[storage]:                                                                                                                                             
+  - forEach(removednode:event.response.nodes):                                                                                                                                                                                   
+      removeBrickFromVolume:                                                                                                                                                                                                     
+        address: ${@removednode.address}     
+                                                                                                                                                                                                                                 
+onAfterRedeployContainer[storage]:                                                                                                                                                                                                    
+  - cmd[storage]: /bin/systemctl start glusterd.service && /bin/systemctl enable glusterd.service;
+  - cmd[${nodes.storage.master.id}]: gluster volume start jelastic force; gluster volume set jelastic network.ping-timeout 3;
+  - forEach(clusternode:nodes.storage):                                                                                                                                                                                          
+      - mountDirectoryToVolume:                                                                                                                                                                                                    
+          id: ${@clusternode.id}                                                                                                                                                                                                   
+          address: ${@clusternode.address}                                                                                                                                                                                   
+      - addAutoMount:                                                                                                                                                                                                    
+          id: ${@clusternode.id}                                                                                                                                                                                                   
+          address: ${@clusternode.address}
+      
+onAfterClone:
+  install:
+    jps: ${baseUrl}/replication-logic.jps?_r=${fn.random}
+    envName: ${event.response.env.envName}
+    nodeGroup: storage
+    settings:
+      replicatedPath: {globals.replicatedPath}
+      
+onBeforeMigrate:
+  - cmd[storage]: umount -l ${globals.replicatedPath} || true; sed -i '/glusterfs/d' /etc/fstab; rm -rf ${globals.replicatedPath}
+  
+onAfterMigrate:
+  initiateGlusterFSCluster
+
+actions:
+  initiateGlusterFSCluster:
+    - cmd[storage]: umount ${globals.replicatedPath} || true;
+    - environment.file.read: 
+        nodeId: ${nodes.storage.master.id}
+        path: /etc/exports
+        user: root
+    - environment.file.write:
+        nodeGroup: storage
+        path: /etc/exports
+        user: root
+        body: ${response.body}
+    - forEach(clusternode:nodes.storage):                                                                                                                                                                                          
+        cleanupNode:                                                                                                                                                                                                           
+          id: ${@clusternode.id}     
+    - forEach(clusternode:nodes.storage):                                                                                                                                                                                          
+        enableGlusterFS:                                                                                                                                                                                                           
+          id: ${@clusternode.id}                                                                                                                                                                                                   
+    - prepareVolumeBricks                                                                                                                                                                                                          
+    - initiateVolume                                                                                                                                                                                                             
+    - forEach(clusternode:nodes.storage):                                                                                                                                                                                          
+        - mountDirectoryToVolume:                                                                                                                                                                                                    
+            id: ${@clusternode.id}                                                                                                                                                                                                   
+            address: ${@clusternode.address}                                                                                                                                                                                      
+        - addAutoMount:                                                                                                                                                                                                    
+            id: ${@clusternode.id}                                                                                                                                                                                                   
+            address: ${@clusternode.address}
+        - fixExistingMounts:                                                                                                                                                                                                    
+            id: ${@clusternode.id}  
+        
+  cleanupNode:                                                                                                                                                                                                              
+    - cmd[${this.id}]: |-
+        service glusterd stop; GLUSTER_PROCESS=$(ps aux|grep gluster|grep -v grep|awk '{print $2}'); 
+        [ -n "${GLUSTER_PROCESS}" ] && kill -9 ${GLUSTER_PROCESS}; rm -rf /var/lib/glusterd/
+      user: root
+      
+  enableGlusterFS:                                                                                                                                                                                                              
+    - cmd[${this.id}]: |-
+        /bin/systemctl enable glusterd.service; /bin/systemctl start glusterd.service; mkdir -p /glustervolume ${globals.replicatedPath}; 
+        echo -e "/glustervolume\n/var/lib/glusterd/\n/var/log/glusterfs\n${globals.replicatedPath}\n/etc/exports" >> /etc/jelastic/redeploy.conf;
+        sed -i '/^$/d' /etc/exports;
+      user: root
+  
+  addPeer:
+    - cmd[${nodes.storage.master.id}]: gluster peer probe ${this.address} && sleep 1;
+                                                                                                                                                                                                                                 
+  prepareVolumeBricks:                                                                                                                                                                                                                                                                                                                                                                                                 
+    forEach(clusternode:nodes.storage):                                                                                                                                                                                          
+      if (${@clusternode.id} != ${nodes.storage.master.id}):                                                                                                                                                                     
+        addPeer:
+            address: ${@clusternode.address}
+          
+  initiateVolume:
+    - cmd[${nodes.storage.master.id}]: |-
+        let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
+        BRICKS_ADDRESSES=$(gluster peer status|grep Hostname| awk '{print $2}'); BRICKS_STRING="${nodes.storage.master.address}:/glustervolume"; 
+        for i in ${BRICKS_ADDRESSES}; do BRICKS_STRING="${BRICKS_STRING} ${i}:/glustervolume"; done; 
+        gluster volume create jelastic replica ${NUMBER_OF_BRICKS} transport tcp ${BRICKS_STRING} force; gluster volume start jelastic; gluster volume set jelastic network.ping-timeout 3;
+      user: root
+      
+  mountDirectoryToVolume:
+    - cmd[${this.id}]: |-
+        dataBackupDir=$(mktemp -d)
+        [ -n "$(ls -A /${globals.replicatedPath})" ] && { shopt -s dotglob; mv ${globals.replicatedPath}/* ${dataBackupDir}/; shopt -u dotglob; };
+        mount.glusterfs localhost:/jelastic ${globals.replicatedPath}
+        chmod 777 ${globals.replicatedPath}
+        [ -n "$(ls -A /${dataBackupDir})" ] && { shopt -s dotglob; mv ${dataBackupDir}/* ${globals.replicatedPath}/; shopt -u dotglob; };
+        rm -rf ${dataBackupDir}
+      user: root
+      
+  addNewNodeToVolume:
+    - cmd[${nodes.storage.master.id}]: |-
+        let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
+        gluster volume add-brick jelastic replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force
+      user: root
+
+  addAutoMount:
+    - cmd[${this.id}]: |-
+        sed -i '/glusterfs/d' /etc/fstab;
+        echo "localhost:/jelastic  ${globals.replicatedPath}   glusterfs   defaults,_netdev,x-systemd.automount 0 0" >> /etc/fstab;
+        
+  addBrickToVolume:
+    - enableGlusterFS:
+        id: ${this.id}
+    - addPeer:
+        address: ${this.address}
+    - addNewNodeToVolume:
+        address: ${this.address}
+    - mountDirectoryToVolume:
+        id: ${this.id}
+        address: ${this.address}
+    - addAutoMount:
+        id: ${this.id}
+        address: ${this.address}
+    - fixExistingMounts: 
+        id: ${this.id}
+        
+  fixExistingMounts:
+    - cmd[${this.id}]: |-
+        LINE_NUMBER=0
+        while read LINE; do let LINE_NUMBER++; FSID=$(cat /proc/sys/kernel/random/uuid); grep -q '^\"${globals.replicatedPath}' <<< $LINE && sed -i "${LINE_NUMBER}s/)$/,fsid=${FSID})/" /etc/exports || true; done < /etc/exports;
+        exportfs -ra;
+        
+  removeBrickFromVolume:
+    - cmd[${nodes.storage.master.id}]: |-
+        NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}'); 
+        yes 2>/dev/null | gluster volume remove-brick jelastic replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force; 
+        gluster peer detach ${this.address} && sleep 1;
