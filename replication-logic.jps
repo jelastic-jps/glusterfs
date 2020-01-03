@@ -80,6 +80,8 @@ actions:
             address: ${@clusternode.address}
         - fixExistingMounts:                                                                                                                                                                                                    
             id: ${@clusternode.id}  
+        - checkStatus:                                                                                                                                                                                                    
+            id: ${@clusternode.id}  
         
   cleanupNode:                                                                                                                                                                                                              
     - cmd[${this.id}]: |-
@@ -153,6 +155,9 @@ actions:
         LINE_NUMBER=0
         while read LINE; do let LINE_NUMBER++; FSID=$(cat /proc/sys/kernel/random/uuid); grep -q '^\"${globals.replicatedPath}' <<< $LINE && sed -i "${LINE_NUMBER}s/)$/,fsid=${FSID})/" /etc/exports || true; done < /etc/exports;
         exportfs -ra;
+  checkStatus:
+    - cmd[${this.id}]: |-
+        gluster volume status;
         
   removeBrickFromVolume:
     - cmd[${nodes.storage.master.id}]: |-
