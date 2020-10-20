@@ -37,7 +37,8 @@ onBeforeInit: |
   return resp;
   
 nodes:
-  - cloudlets: 8
+  - fixedCloudlets: 1
+    flexibleCloudlets: 6
     count: "${settings.nodes}"
     nodeGroup: storage
     nodeType: storage
