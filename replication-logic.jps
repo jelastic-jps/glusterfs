@@ -49,14 +49,14 @@ onAfterClone:
       replicatedPath: {globals.replicatedPath}
       
 onBeforeMigrate:
-  - cmd[storage]: umount -l ${globals.replicatedPath} || true; sed -i '/glusterfs/d' /etc/fstab; rm -rf ${globals.replicatedPath}
+  - cmd[storage]: systemctl stop $(systemd-escape -p --suffix=automount ${globals.replicatedPath}); umount -l ${globals.replicatedPath} || true; sed -i '/glusterfs/d' /etc/fstab; rm -rf ${globals.replicatedPath}
   
 onAfterMigrate:
   initiateGlusterFSCluster
 
 actions:
   initiateGlusterFSCluster:
-    - cmd[storage]: umount ${globals.replicatedPath} || true;
+    - cmd[storage]: systemctl stop $(systemd-escape -p --suffix=automount ${globals.replicatedPath}); umount ${globals.replicatedPath} || true;
     - environment.file.read: 
         nodeId: ${nodes.storage.master.id}
         path: /etc/exports
@@ -89,7 +89,7 @@ actions:
   cleanupNode:                                                                                                                                                                                                              
     - cmd[${this.id}]: |-
         service glusterd stop; GLUSTER_PROCESS=$(ps aux|grep gluster|grep -v grep|awk '{print $2}'); 
-        [ -n "${GLUSTER_PROCESS}" ] && kill -9 ${GLUSTER_PROCESS}; rm -rf /var/lib/glusterd/
+        [ -n "${GLUSTER_PROCESS}" ] && kill -9 ${GLUSTER_PROCESS}; sed -i '/glusterfs/d' /etc/fstab; rm -rf /var/lib/glusterd/;
       user: root
       
   enableGlusterFS:                                                                                                                                                                                                              
