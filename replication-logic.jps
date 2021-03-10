@@ -90,7 +90,7 @@ actions:
   cleanupNode:                                                                                                                                                                                                              
     - cmd[${this.id}]: |-
         service glusterd stop; GLUSTER_PROCESS=$(ps aux|grep gluster|grep -v grep|awk '{print $2}'); 
-        [ -n "${GLUSTER_PROCESS}" ] && kill -9 ${GLUSTER_PROCESS}; sed -i '/glusterfs/d' /etc/fstab; rm -rf /var/lib/glusterd/;
+        [ -n "${GLUSTER_PROCESS}" ] && kill -9 ${GLUSTER_PROCESS}; sed -i '/glusterfs/d' /etc/fstab; rm -rf /var/lib/glusterd/{vols,ss_brick,peers};
       user: root
       
   enableGlusterFS:                                                                                                                                                                                                              
