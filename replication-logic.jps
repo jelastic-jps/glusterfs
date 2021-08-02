@@ -11,6 +11,7 @@ permanent: true
 
 globals:
   replicatedPath: ${settings.replicatedPath:/data}
+  replicatedVolume: ${settings.replicatedVolume:data}
                                                                                                                                                                               
 onInstall:        
   initiateGlusterFSCluster
@@ -27,12 +28,13 @@ onAfterServiceScaleOut[storage]:
 onBeforeScaleIn[storage]:                                                                                                                                             
   - forEach(removednode:event.response.nodes):                                                                                                                                                                                   
       removeBrickFromVolume:                                                                                                                                                                                                     
-        address: ${@removednode.address}     
+        address: ${@removednode.address}
+        id: ${@removednode.id}
                                                                                                                                                                                                                                  
 onAfterRedeployContainer[storage]:                                                                                                                                                                                                    
   - cmd[storage]: /bin/systemctl start glusterd.service && /bin/systemctl enable glusterd.service;
-  - cmd[${nodes.storage.master.id}]: set -o pipefail; gluster --log-level=TRACE --log-file=/dev/stdout volume start jelastic force | tee -a /var/log/glusterfs/glusterd.log;
-  - cmd[${nodes.storage.master.id}]: gluster volume set jelastic network.ping-timeout 3;
+  - cmd[${nodes.storage.master.id}]: set -o pipefail; gluster --log-level=TRACE --log-file=/dev/stdout volume start ${globals.replicatedVolume} force | tee -a /var/log/glusterfs/glusterd.log;
+  - cmd[${nodes.storage.master.id}]: gluster volume set ${globals.replicatedVolume} network.ping-timeout 3;
   - forEach(clusternode:nodes.storage):                                                                                                                                                                                          
       - mountDirectoryToVolume:                                                                                                                                                                                                    
           id: ${@clusternode.id}                                                                                                                                                                                                   
@@ -42,22 +44,27 @@ onAfterRedeployContainer[storage]:
           address: ${@clusternode.address}
       
 onAfterClone:
-  install:
-    jps: ${baseUrl}/replication-logic.jps?_r=${fn.random}
-    envName: ${event.response.env.envName}
-    nodeGroup: storage
-    settings:
-      replicatedPath: {globals.replicatedPath}
+  if ('${fn.compareEngine(6.1.1):}' < 0):
+    reinstallGlusterFSLogic:
+      clonedEnv: ${event.response.env.envName}
+
+onAfterCloneAllNodes:
+  reinstallGlusterFSLogic:
+    clonedEnv: ${event.params.targetenv}
       
 onBeforeMigrate:
-  - cmd[storage]: systemctl stop $(systemd-escape -p --suffix=automount ${globals.replicatedPath}); umount -l ${globals.replicatedPath} || true; sed -i '/glusterfs/d' /etc/fstab; rm -rf ${globals.replicatedPath}
-  
+  - umountFuze: ${nodes.storage.join(id,)}
+  - cmd[storage]: sed -i '/glusterfs/d' /etc/fstab; rm -rf ${globals.replicatedPath}
+
 onAfterMigrate:
   initiateGlusterFSCluster
+  
+onBeforeStop:
+  - umountFuze: ${nodes.storage.join(id,)}
 
 actions:
   initiateGlusterFSCluster:
-    - cmd[storage]: systemctl stop $(systemd-escape -p --suffix=automount ${globals.replicatedPath}); umount ${globals.replicatedPath} || true;
+    - umountFuze: ${nodes.storage.join(id,)}
     - environment.file.read: 
         nodeId: ${nodes.storage.master.id}
         path: /etc/exports
@@ -114,14 +121,15 @@ actions:
         let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
         BRICKS_ADDRESSES=$(gluster peer status|grep Hostname| awk '{print $2}'); BRICKS_STRING="${nodes.storage.master.address}:/glustervolume"; 
         for i in ${BRICKS_ADDRESSES}; do BRICKS_STRING="${BRICKS_STRING} ${i}:/glustervolume"; done; 
-        gluster volume create jelastic replica ${NUMBER_OF_BRICKS} transport tcp ${BRICKS_STRING} force; gluster volume start jelastic; gluster volume set jelastic network.ping-timeout 3;
+        gluster volume create ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} transport tcp ${BRICKS_STRING} force; gluster volume start ${globals.replicatedVolume}; gluster volume set ${globals.replicatedVolume} network.ping-timeout 3;
+        if [ -f /etc/jelastic/clients/${globals.replicatedVolume} ]; then gluster volume set ${globals.replicatedVolume} auth.allow $(cat /etc/jelastic/clients/data|tr ' ' ','); else gluster volume set ${globals.replicatedVolume} auth.allow 127.0.0.1; fi;
       user: root
       
   mountDirectoryToVolume:
     - cmd[${this.id}]: |-
         dataBackupDir=$(mktemp -d)
         [ -n "$(ls -A /${globals.replicatedPath})" ] && { shopt -s dotglob; mv ${globals.replicatedPath}/* ${dataBackupDir}/; shopt -u dotglob; };
-        mount.glusterfs localhost:/jelastic ${globals.replicatedPath}
+        mount.glusterfs localhost:/${globals.replicatedVolume} ${globals.replicatedPath}
         chmod 777 ${globals.replicatedPath}
         [ -n "$(ls -A /${dataBackupDir})" ] && { shopt -s dotglob; mv ${dataBackupDir}/* ${globals.replicatedPath}/; shopt -u dotglob; };
         rm -rf ${dataBackupDir}
@@ -130,15 +138,17 @@ actions:
   addNewNodeToVolume:
     - cmd[${nodes.storage.master.id}]: |-
         let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
-        gluster volume add-brick jelastic replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force
+        gluster volume add-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force
       user: root
 
   addAutoMount:
     - cmd[${this.id}]: |-
         sed -i '/glusterfs/d' /etc/fstab;
-        echo "localhost:/jelastic  ${globals.replicatedPath}   glusterfs   defaults,_netdev,x-systemd.automount 0 0" >> /etc/fstab;
+        echo "localhost:/${globals.replicatedVolume}  ${globals.replicatedPath}   glusterfs   defaults,_netdev,x-systemd.automount 0 0" >> /etc/fstab;
         
   addBrickToVolume:
+    - addPeerToAuthAllow:
+        address: ${this.address}
     - enableGlusterFS:
         id: ${this.id}
     - addPeer:
@@ -151,8 +161,10 @@ actions:
     - addAutoMount:
         id: ${this.id}
         address: ${this.address}
-    - fixExistingMounts: 
+    - fixExistingMounts:
         id: ${this.id}
+    - removePeerFromAuthAllow:
+        address: ${this.address}
         
   fixExistingMounts:
     - cmd[${this.id}]: |-
@@ -164,7 +176,29 @@ actions:
         gluster volume status;
         
   removeBrickFromVolume:
+    - umountFuze: ${this.id}
     - cmd[${nodes.storage.master.id}]: |-
         NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}'); 
-        yes 2>/dev/null | gluster volume remove-brick jelastic replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force; 
+        yes 2>/dev/null | gluster volume remove-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force; 
         gluster peer detach ${this.address} && sleep 1;
+        
+  umountFuze:
+    - cmd[${this}]: systemctl stop $(systemd-escape -p --suffix=automount ${globals.replicatedPath}); umount -l ${globals.replicatedPath} || true;
+    
+  addPeerToAuthAllow:
+    - cmd[${nodes.storage.master.id}]: |-
+        CURRENT_AUTH_ALLOW=$(gluster volume info ${globals.replicatedVolume}|grep 'auth.allow'|awk '{print $2}');
+        gluster volume set ${globals.replicatedVolume} auth.allow ${CURRENT_AUTH_ALLOW},${this.address}
+        
+  removePeerFromAuthAllow:
+    - cmd[${nodes.storage.master.id}]: |-
+        AUTH_ALLOW=$(gluster volume info ${globals.replicatedVolume}|grep 'auth.allow'|awk '{print $2}'|sed "s/,${this.address}//g");
+        gluster volume set ${globals.replicatedVolume} auth.allow ${AUTH_ALLOW}
+  
+  reinstallGlusterFSLogic:
+    install:
+      jps: ${baseUrl}/replication-logic.jps?_r=${fn.random}
+      envName: ${this.clonedEnv}
+      nodeGroup: storage
+      settings:
+        replicatedPath: {globals.replicatedPath}
