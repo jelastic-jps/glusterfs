@@ -202,6 +202,6 @@ actions:
     install:
       jps: ${baseUrl}/replication-logic.jps?_r=${fn.random}
       envName: ${this.clonedEnv}
-      nodeGroup: storage
       settings:
+        nodeGroup: ${settings.nodeGroup} 
         replicatedPath: {globals.replicatedPath}
