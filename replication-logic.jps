@@ -151,8 +151,14 @@ actions:
   addNewNodeToVolume:
     - cmd[${nodes.storage.master.id}]: |-
         let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
-        gluster volume add-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force
-      user: root
+        counter=0
+        while true
+        do
+        gluster volume add-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume forceres=$?
+        [[ "$res" -eq 0 ]] && exit 0
+        [[ "$counter" -gt 10 ]] && { echo "volume add-brick failed"; exit 1; }
+        done
+    user: root
 
   addAutoMount:
     - cmd[${this.id}]: |-
