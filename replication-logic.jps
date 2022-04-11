@@ -158,7 +158,7 @@ actions:
         [[ "$res" -eq 0 ]] && exit 0
         [[ "$counter" -gt 10 ]] && { echo "volume add-brick failed"; exit 1; }
         done
-    user: root
+      user: root
 
   addAutoMount:
     - cmd[${this.id}]: |-
