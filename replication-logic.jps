@@ -154,7 +154,7 @@ actions:
         counter=0
         while true
         do
-        gluster volume add-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force 2>&1 | tee -a /var/log/glusterfs/glusterd.log; res=$?
+        set -o pipefail; gluster volume add-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force 2>&1 | tee -a /var/log/glusterfs/glusterd.log; res=$?
         echo "Result: $res"
         [[ "$res" -eq 0 ]] && { echo "Volume add-brick succeeded"; exit 0; } 
         [[ "$counter" -gt 10 ]] && { echo "Volume add-brick failed, $res"; exit 1; }
