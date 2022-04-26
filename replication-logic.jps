@@ -111,8 +111,18 @@ actions:
       user: root
   
   addPeer:
-    - cmd[${nodes.storage.master.id}]: set -o pipefail; gluster --log-level=TRACE --log-file=/dev/stdout peer probe ${this.address} | tee -a /var/log/glusterfs/glusterd.log && sleep 1;
-                                                                                                                                                                                                                                 
+    - cmd[${nodes.storage.master.id}]: |-
+        counter=0
+        while true
+        do
+        counter2=0
+        while [[ "$counter2" -le 20 ]]; do sleep 1; gluster peer status && break; counter2=$((counter2+1));done
+        set -o pipefail; gluster --log-file=/dev/stdout peer probe ${this.address} | tee -a /var/log/glusterfs/glusterd.log; res=$?
+        [[ "$res" -eq 0 ]] && exit 0
+        [[ "$counter" -gt 10 ]] && { echo "peer is not available"; exit 1; }
+        counter=$((counter+1))
+        done
+
   prepareVolumeBricks:                                                                                                                                                                                                                                                                                                                                                                                                 
     forEach(clusternode:nodes.storage):                                                                                                                                                                                          
       if (${@clusternode.id} != ${nodes.storage.master.id}):                                                                                                                                                                     
@@ -141,7 +151,15 @@ actions:
   addNewNodeToVolume:
     - cmd[${nodes.storage.master.id}]: |-
         let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
-        gluster volume add-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force
+        counter=0
+        while true
+        do
+        set -o pipefail; gluster volume add-brick ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} ${this.address}:/glustervolume force 2>&1 | tee -a /var/log/glusterfs/glusterd.log; res=$?
+        [[ "$res" -eq 0 ]] && { echo "Volume add-brick succeeded"; exit 0; } 
+        [[ "$counter" -gt 10 ]] && { echo "Volume add-brick failed"; exit 1; }
+        sleep 1
+        counter=$((counter+1))
+        done
       user: root
 
   addAutoMount:
