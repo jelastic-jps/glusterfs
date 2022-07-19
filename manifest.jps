@@ -43,5 +43,3 @@ nodes:
     nodeGroup: storage
     nodeType: storage
     cluster: true
-    
-success: /text/success.md
