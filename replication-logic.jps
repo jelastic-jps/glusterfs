@@ -9,8 +9,6 @@ name: GlusterFS Cluster Replication Logic
 
 permanent: true
 
-targetNodes: none
-
 nodeGroupAlias:
   ${settings.nodeGroup}: storage
 
@@ -52,6 +50,10 @@ onAfterClone:
   if ('${fn.compareEngine(6.1.1):}' < 0):
     reinstallGlusterFSLogic:
       clonedEnv: ${event.response.env.envName}
+
+onAfterCloneAllNodes:
+  reinstallGlusterFSLogic:
+    clonedEnv: ${event.params.targetenv}
       
 onBeforeMigrate:
   - umountFuze: ${nodes.storage.join(id,)}
