@@ -9,8 +9,10 @@ name: GlusterFS Cluster Replication Logic
 
 permanent: true
 
+targetNodes: none
+
 nodeGroupAlias:
-  ${targetNodes.nodeGroup}: target
+  ${settings.nodeGroup}: storage
 
 globals:
   replicatedPath: ${settings.replicatedPath:/data}
