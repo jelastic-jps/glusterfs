@@ -225,3 +225,4 @@ actions:
       settings:
         nodeGroup: ${settings.nodeGroup} 
         replicatedPath: {globals.replicatedPath}
+        replicatedVolume: {globals.replicatedVolume}
