@@ -50,10 +50,6 @@ onAfterClone:
   if ('${fn.compareEngine(6.1.1):}' < 0):
     reinstallGlusterFSLogic:
       clonedEnv: ${event.response.env.envName}
-
-onAfterCloneAllNodes:
-  reinstallGlusterFSLogic:
-    clonedEnv: ${event.params.targetenv}
       
 onBeforeMigrate:
   - umountFuze: ${nodes.target.join(id,)}
