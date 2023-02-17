@@ -22,24 +22,24 @@ onInstall:
   initiateGlusterFSCluster
 
 onAfterStart:
-  - cmd[target]: mount -a; exportfs -ra;
+  - cmd[storage]: mount -a; exportfs -ra;
 
-onAfterServiceScaleOut[target]:                                                                                                                                                                                                 
+onAfterServiceScaleOut[storage]:                                                                                                                                                                                                 
   - forEach(newnode:event.response.nodes):                                                                                                                                                                                       
       - addBrickToVolume:                                                                                                                                                                                                          
           address: ${@newnode.address}                                                                                                                                                                                             
           id: ${@newnode.id}
                                                                                                                                                                                                                                  
-onBeforeScaleIn[target]:                                                                                                                                             
+onBeforeScaleIn[storage]:                                                                                                                                             
   - forEach(removednode:event.response.nodes):                                                                                                                                                                                   
       removeBrickFromVolume:                                                                                                                                                                                                     
         address: ${@removednode.address}
         id: ${@removednode.id}
                                                                                                                                                                                                                                  
-onAfterRedeployContainer[target]:                                                                                                                                                                                                    
-  - cmd[target]: /bin/systemctl start glusterd.service && /bin/systemctl enable glusterd.service;
-  - cmd[${nodes.target.master.id}]: set -o pipefail; gluster --log-level=TRACE --log-file=/dev/stdout volume start ${globals.replicatedVolume} force | tee -a /var/log/glusterfs/glusterd.log;
-  - cmd[${nodes.target.master.id}]: gluster volume set ${globals.replicatedVolume} network.ping-timeout 3;
+onAfterRedeployContainer[storage]:                                                                                                                                                                                                    
+  - cmd[storage]: /bin/systemctl start glusterd.service && /bin/systemctl enable glusterd.service;
+  - cmd[${nodes.storage.master.id}]: set -o pipefail; gluster --log-level=TRACE --log-file=/dev/stdout volume start ${globals.replicatedVolume} force | tee -a /var/log/glusterfs/glusterd.log;
+  - cmd[${nodes.storage.master.id}]: gluster volume set ${globals.replicatedVolume} network.ping-timeout 3;
   - forEach(clusternode:nodes.storage):                                                                                                                                                                                          
       - mountDirectoryToVolume:                                                                                                                                                                                                    
           id: ${@clusternode.id}                                                                                                                                                                                                   
@@ -54,20 +54,20 @@ onAfterClone:
       clonedEnv: ${event.response.env.envName}
       
 onBeforeMigrate:
-  - umountFuze: ${nodes.target.join(id,)}
-  - cmd[target]: sed -i '/glusterfs/d' /etc/fstab; rm -rf ${globals.replicatedPath}
+  - umountFuze: ${nodes.storage.join(id,)}
+  - cmd[storage]: sed -i '/glusterfs/d' /etc/fstab; rm -rf ${globals.replicatedPath}
 
 onAfterMigrate:
   initiateGlusterFSCluster
   
 onBeforeStop:
-  - umountFuze: ${nodes.target.join(id,)}
+  - umountFuze: ${nodes.storage.join(id,)}
 
 actions:
   initiateGlusterFSCluster:
-    - umountFuze: ${nodes.target.join(id,)}
+    - umountFuze: ${nodes.storage.join(id,)}
     - environment.file.read: 
-        nodeId: ${nodes.target.master.id}
+        nodeId: ${nodes.storage.master.id}
         path: /etc/exports
         user: root
     - environment.file.write:
@@ -109,7 +109,7 @@ actions:
       user: root
   
   addPeer:
-    - cmd[${nodes.target.master.id}]: |-
+    - cmd[${nodes.storage.master.id}]: |-
         counter=0
         while true
         do
@@ -123,12 +123,12 @@ actions:
 
   prepareVolumeBricks:                                                                                                                                                                                                                                                                                                                                                                                                 
     forEach(clusternode:nodes.storage):                                                                                                                                                                                          
-      if (${@clusternode.id} != ${nodes.target.master.id}):                                                                                                                                                                     
+      if (${@clusternode.id} != ${nodes.storage.master.id}):                                                                                                                                                                     
         addPeer:
             address: ${@clusternode.address}
           
   initiateVolume:
-    - cmd[${nodes.target.master.id}]: |-
+    - cmd[${nodes.storage.master.id}]: |-
         let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
         BRICKS_ADDRESSES=$(gluster peer status|grep Hostname| awk '{print $2}'); BRICKS_STRING="${nodes.storage.master.address}:/glustervolume"; 
         for i in ${BRICKS_ADDRESSES}; do BRICKS_STRING="${BRICKS_STRING} ${i}:/glustervolume"; done; 
@@ -147,7 +147,7 @@ actions:
       user: root
       
   addNewNodeToVolume:
-    - cmd[${nodes.target.master.id}]: |-
+    - cmd[${nodes.storage.master.id}]: |-
         let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
         counter=0
         while true
@@ -205,12 +205,12 @@ actions:
     - cmd[${this}]: systemctl stop $(systemd-escape -p --suffix=automount ${globals.replicatedPath}); umount -l ${globals.replicatedPath} || true;
     
   addPeerToAuthAllow:
-    - cmd[${nodes.target.master.id}]: |-
+    - cmd[${nodes.storage.master.id}]: |-
         CURRENT_AUTH_ALLOW=$(gluster volume info ${globals.replicatedVolume}|grep 'auth.allow'|awk '{print $2}');
         gluster volume set ${globals.replicatedVolume} auth.allow ${CURRENT_AUTH_ALLOW},${this.address}
         
   removePeerFromAuthAllow:
-    - cmd[${nodes.target.master.id}]: |-
+    - cmd[${nodes.storage.master.id}]: |-
         AUTH_ALLOW=$(gluster volume info ${globals.replicatedVolume}|grep 'auth.allow'|awk '{print $2}'|sed "s/,${this.address}//g");
         gluster volume set ${globals.replicatedVolume} auth.allow ${AUTH_ALLOW}
   
