@@ -12,21 +12,39 @@ description:
   short: GlusterFS Replicated Volume
   
 onBeforeInit: | 
-  var minnodescount = 3, markup = null, q = jelastic.billing.account.GetQuotas("environment.maxnodescount;environment.maxsamenodescount").array;
+  var showMarkup = false, markup = "Creation of glusterfs topology is not possible because of such quotas: ", minnodescount = 3;
+  var SAME_NODES = "environment.maxsamenodescount",
+  MAX_NODES = "environment.maxnodescount";
+
+  var hasCollaboration = (parseInt('${fn.compareEngine(7.0)}', 10) >= 0),
+    quotas = [];
+
+  if (hasCollaboration) {
+    quotas = [
+        { quota : { name: MAX_NODES }, value: parseInt('${quota.environment.maxnodescount}', 10) },
+        { quota : { name: SAME_NODES }, value: parseInt('${quota.environment.maxsamenodescount}', 10) }
+    ];
+  } else {
+    quotas.push(jelastic.billing.account.GetQuotas(SAME_NODES).array[0]);
+    quotas.push(jelastic.billing.account.GetQuotas(MAX_NODES).array[0]);
+  }
   var max = minnodescount;
-  for (var i = 0; i < q.length; i++){
-      if ( q[i].value < minnodescount) {
-          markup = "Quota limits: " + q[i].quota.name + " = " + q[i].value + ". Please upgrade your account.";
-          break;
-      } else if (max < q[i].value) {
-          max = q[i].value;
+  for (var i = 0; i < quotas.length; i++){
+      if ( quotas[i].value < minnodescount) {
+          showMarkup = true;
+          markup += " " + quotas[i].quota.name + " = " + quotas[i].value + ", ";
+      } else if (max < quotas[i].value) {
+          max = quotas[i].value;
             if (max % 2 == 0) {
                 max = --max;
             }
       }
   }
+
   var resp = {result: 0, settings: {fields: []}};
-  if (markup) { 
+  if (showMarkup) {
+      markup = markup.toString().slice(0, -2);
+      markup += ". Please upgrade your account."
       resp.settings.fields.push(
           {"type": "displayfield", "cls": "warning", "height": 30, "hideLabel": true, "markup": markup},
           {"type": "compositefield","height": 0,"hideLabel": true,"width": 0,"items": [{"height": 0,"type": "string","required": true}]}
