@@ -133,8 +133,19 @@ actions:
     - cmd[${nodes.storage.master.id}]: |-
         let "NUMBER_OF_BRICKS=$(gluster peer status |grep 'Number of Peers'|awk '{print $4}') + 1"; 
         BRICKS_ADDRESSES=$(gluster peer status|grep Hostname| awk '{print $2}'); BRICKS_STRING="${nodes.storage.master.address}:/glustervolume"; 
-        for i in ${BRICKS_ADDRESSES}; do BRICKS_STRING="${BRICKS_STRING} ${i}:/glustervolume"; done; 
-        gluster volume create ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} transport tcp ${BRICKS_STRING} force; gluster volume start ${globals.replicatedVolume}; gluster volume set ${globals.replicatedVolume} network.ping-timeout 3;
+        for i in ${BRICKS_ADDRESSES}; do BRICKS_STRING="${BRICKS_STRING} ${i}:/glustervolume"; done;
+        counter=1
+        while true
+        do
+            echo "Volume create operation - attempt ${counter}" | tee -a /var/log/glusterfs/glusterd.log;
+            gluster volume create ${globals.replicatedVolume} replica ${NUMBER_OF_BRICKS} transport tcp ${BRICKS_STRING} force | tee -a /var/log/glusterfs/glusterd.log; res=$?
+            [[ "$res" -eq 0 ]] && { echo "Volume create operation succeeded" | tee -a /var/log/glusterfs/glusterd.log; break; } 
+            [[ "$counter" -gt 3 ]] && { echo "Volume create operation failed" | tee -a /var/log/glusterfs/glusterd.log; exit 1; }
+            sleep 1
+            counter=$((counter+1))
+        done
+        gluster volume start ${globals.replicatedVolume};
+        gluster volume set ${globals.replicatedVolume} network.ping-timeout 3;
         if [ -f /etc/jelastic/clients/${globals.replicatedVolume} ]; then gluster volume set ${globals.replicatedVolume} auth.allow $(cat /etc/jelastic/clients/data|tr ' ' ','); else gluster volume set ${globals.replicatedVolume} auth.allow 127.0.0.1; fi;
       user: root
       
