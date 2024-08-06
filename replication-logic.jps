@@ -38,15 +38,14 @@ onAfterRedeployContainer[storage]:
   - cmd[storage]: /bin/systemctl start glusterd.service && /bin/systemctl enable glusterd.service;
   - cmd[${nodes.storage.master.id}]: set -o pipefail; gluster --log-level=TRACE --log-file=/dev/stdout volume start ${globals.replicatedVolume} force | tee -a /var/log/glusterfs/glusterd.log;
   - cmd[${nodes.storage.master.id}]: gluster volume set ${globals.replicatedVolume} network.ping-timeout 3;
-  - getnodes:
-        ids: ${event.response.responses.join(nodeid,)}
-  - forEach(clusternode:response.storagenodes):
+  - getnodes: ${event.response.responses.join(nodeid,)}
+  - forEach(node:response.nodes):
       - mountDirectoryToVolume:
-          id: ${@clusternode.id}
-          address: ${@clusternode.address}
+          id: ${@node.id}
+          address: ${@node.address}
       - addAutoMount:
-          id: ${@clusternode.id}
-          address: ${@clusternode.address}
+          id: ${@node.id}
+          address: ${@node.address}
 
 onAfterClone:
   if ('${fn.compareEngine(6.1.1):}' < 0):
@@ -239,11 +238,13 @@ actions:
         replicatedVolume: {globals.replicatedVolume}
 
   getnodes:
+    ids: ${this}
     script: |
-        var envName = '${env.envName}', nodes = jelastic.env.control.GetEnvInfo(envName, session).nodes,
-        ids = "${this.ids}".split(','), clusternode = [];
-        for (var i = 0; i < nodes.length; i++)
-            if (ids.includes(nodes[i].id.toString())){
-                clusternode.push({ address: nodes[i].address, id: nodes[i].id});
-            };
-          return { result: 0, storagenodes: clusternode };
+        ids = String(ids).split(',');
+
+        let resp = api.env.control.GetEnvInfo('${env.envName}', session);
+        if (resp.result != 0) return resp;
+
+        let nodes = resp.nodes.filter(node => (ids.includes(String(node.id))));
+
+        return { result: 0, nodes: nodes };
